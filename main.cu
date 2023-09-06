@@ -3,6 +3,7 @@
 #include <SDL2/SDL.h>
 #include <thread>
 #include <vector>
+#include <math.h>
 
 #define max_prey 100
 #define max_predators 50
@@ -14,7 +15,7 @@
 #define prey_max_turn_speed 1
 #define predators_max_speed 1
 #define predators_max_turn_speed 1
-#define prey_view_distance 30
+#define prey_view_distance 1000
 #define predators_view_distance 50
 
 #define input_number 20
@@ -122,11 +123,23 @@ void draw(){
 
 __global__ void prey_process(Data* data) {
     int index = (blockIdx.x); //TODO work for thread and block split
+    for (int n = 0; n < data->number_of_prey; n++){
+        if (n == index) continue;
+        float distance[2] = {
+                data->prey[n].pos[0]-data->prey[index].pos[0],
+                data->prey[n].pos[1]-data->prey[index].pos[1]
+        };
 
+        if (distance[0]*distance[0] + distance[1]*distance[1] < prey_view_distance*prey_view_distance){
+            float angle = atan(distance[0]/distance[1]);
+            printf("%f\n", angle);
+        }
+    }
 
     return;
 }
 __global__ void predator_process(Data* data) {
+    int index = (blockIdx.x); //TODO work for thread and block split
 
 
     return;
