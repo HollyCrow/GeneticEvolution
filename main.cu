@@ -70,7 +70,10 @@ public:
         this->pos[0] = x;
         this->pos[1] = y;
     }
-    Agent() = default;
+    Agent(){
+        this->pos[0] = 100;
+        this->pos[1] = 100;
+    }
 };
 
 
@@ -81,16 +84,6 @@ SDL_Renderer* renderer = nullptr;
 
 bool running = true;
 bool paused = false;
-
-
-
-
-void draw(){
-    SDL_SetRenderDrawColor(renderer, 0,0,0,255);
-    SDL_RenderClear(renderer);
-    SDL_RenderPresent(renderer);
-}
-
 
 
 struct Data{
@@ -104,12 +97,33 @@ Data data;
 Data *cuda_data;
 
 
+void draw(){
+    SDL_SetRenderDrawColor(renderer, 0,0,0,255);
+    SDL_RenderClear(renderer);
+    SDL_SetRenderDrawColor(renderer, 0,255,0,255);
+
+    for (int n = 0; n < data.number_of_prey; n++){
+        SDL_RenderDrawPoint(renderer, (int) data.prey[n].pos[0], (int) data.prey[n].pos[1]);
+    }
+
+    SDL_RenderPresent(renderer);
+}
+
+
+
+
+
 
 __global__ void prey_process(Data* data) {
+    int index = (blockIdx.x); //TODO work for thread and block split
+    printf("Index: %d\n", index);
+
+
 
     return;
 }
 __global__ void predator_process(Data* data) {
+
 
     return;
 }
@@ -119,6 +133,8 @@ void FixedUpdate(){ // Fixed time updater
     while (running) {
         if (!paused){
             //TODO actual processing
+            prey_process<<<32, 1>>>(cuda_data);
+            cudaDeviceSynchronize();
             cudaMemcpy(&data, cuda_data, sizeof (data), cudaMemcpyDeviceToHost);
         }
         std::this_thread::sleep_until(target_time);
@@ -145,7 +161,7 @@ int main(int argc, char **argv) {
     std::thread physicsThread(&FixedUpdate);
 
     while (running) {
-//        draw();
+        draw();
         SDL_Event event;
         while (SDL_PollEvent(&event)) {
             switch (event.type) {
