@@ -4,7 +4,6 @@
 #include <thread>
 #include <vector>
 
-
 #define max_prey 100
 #define max_predators 50
 #define initial_prey 50
@@ -23,7 +22,6 @@
 
 using namespace std::literals;
 using clock_type = std::chrono::high_resolution_clock;
-
 
 
 class Network{
@@ -72,6 +70,7 @@ public:
         this->pos[0] = x;
         this->pos[1] = y;
     }
+    Agent() = default;
 };
 
 
@@ -83,16 +82,7 @@ SDL_Renderer* renderer = nullptr;
 bool running = true;
 bool paused = false;
 
-void FixedUpdate(){ // Fixed time updater
-    auto target_time = clock_type::now() + 30ms;
-    while (running) {
-        if (!paused){
-//            printf("Fixed updating!\n");
-        }
-        std::this_thread::sleep_until(target_time);
-        target_time += 30ms;
-    }
-}
+
 
 
 void draw(){
@@ -103,6 +93,39 @@ void draw(){
 
 
 
+struct Data{
+    Agent prey[max_prey];
+    Agent predators[max_predators];
+    int number_of_prey;
+    int number_predators;
+    int tick;
+};
+Data data;
+Data *cuda_data;
+
+
+
+__global__ void prey_process(Data* data) {
+
+    return;
+}
+__global__ void predator_process(Data* data) {
+
+    return;
+}
+
+void FixedUpdate(){ // Fixed time updater
+    auto target_time = clock_type::now() + 30ms;
+    while (running) {
+        if (!paused){
+            //TODO actual processing
+            cudaMemcpy(&data, cuda_data, sizeof (data), cudaMemcpyDeviceToHost);
+        }
+        std::this_thread::sleep_until(target_time);
+        target_time += 30ms;
+    }
+}
+
 int main(int argc, char **argv) {
     std::cout << "Genetic evolution!" << std::endl;
 
@@ -111,15 +134,18 @@ int main(int argc, char **argv) {
     SDL_RenderSetScale(renderer,1,1);
     SDL_SetWindowTitle(window, "Genetic evolution");
 
+
+    data.number_predators = initial_predators;
+    data.number_of_prey = initial_prey;
+    cudaMalloc(&cuda_data, sizeof (data));
+    cudaMemcpy(cuda_data, &data, sizeof (data), cudaMemcpyHostToDevice);
+
+
+
     std::thread physicsThread(&FixedUpdate);
 
-
-    std::vector<Agent> prey;
-    std::vector<Agent> predators;
-
-
     while (running) {
-        draw();
+//        draw();
         SDL_Event event;
         while (SDL_PollEvent(&event)) {
             switch (event.type) {
@@ -132,6 +158,9 @@ int main(int argc, char **argv) {
             }
         }
     }
+
+    physicsThread.join();
+
 
 
     return 0;
