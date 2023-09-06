@@ -14,6 +14,8 @@
 #define prey_max_turn_speed 1
 #define predators_max_speed 1
 #define predators_max_turn_speed 1
+#define prey_view_distance 30
+#define predators_view_distance 50
 
 #define input_number 20
 #define internal_number 5
@@ -100,10 +102,14 @@ Data *cuda_data;
 void draw(){
     SDL_SetRenderDrawColor(renderer, 0,0,0,255);
     SDL_RenderClear(renderer);
-    SDL_SetRenderDrawColor(renderer, 0,255,0,255);
 
+    SDL_SetRenderDrawColor(renderer, 0,255,0,255);
     for (int n = 0; n < data.number_of_prey; n++){
         SDL_RenderDrawPoint(renderer, (int) data.prey[n].pos[0], (int) data.prey[n].pos[1]);
+    }
+    SDL_SetRenderDrawColor(renderer, 255,0,0,255);
+    for (int n = 0; n < data.number_of_prey; n++){
+        SDL_RenderDrawPoint(renderer, (int) data.predators[n].pos[0], (int) data.predators[n].pos[1]);
     }
 
     SDL_RenderPresent(renderer);
@@ -116,8 +122,6 @@ void draw(){
 
 __global__ void prey_process(Data* data) {
     int index = (blockIdx.x); //TODO work for thread and block split
-    printf("Index: %d\n", index);
-
 
 
     return;
@@ -143,6 +147,7 @@ void FixedUpdate(){ // Fixed time updater
 }
 
 int main(int argc, char **argv) {
+    srand((unsigned) time(NULL));
     std::cout << "Genetic evolution!" << std::endl;
 
     SDL_Init(SDL_INIT_VIDEO);
@@ -150,12 +155,21 @@ int main(int argc, char **argv) {
     SDL_RenderSetScale(renderer,1,1);
     SDL_SetWindowTitle(window, "Genetic evolution");
 
-
     data.number_predators = initial_predators;
     data.number_of_prey = initial_prey;
+
+    for (int n = 0; n < data.number_of_prey; n++){ //Scatter predators and prey
+        data.prey[n].pos[0] = 1000*((float) rand())/(RAND_MAX);
+        data.prey[n].pos[1] = 1000*((float) rand())/(RAND_MAX);
+    }
+    for (int n = 0; n < data.number_predators; n++){
+        data.predators[n].pos[0] = 1000*((float) rand())/(RAND_MAX);
+        data.predators[n].pos[1] = 1000*((float) rand())/(RAND_MAX);
+    }
+
+
     cudaMalloc(&cuda_data, sizeof (data));
     cudaMemcpy(cuda_data, &data, sizeof (data), cudaMemcpyHostToDevice);
-
 
 
     std::thread physicsThread(&FixedUpdate);
