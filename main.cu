@@ -15,13 +15,16 @@
 #define prey_max_turn_speed 1
 #define predators_max_speed 1
 #define predators_max_turn_speed 1
-#define prey_view_distance 1000
+#define prey_view_distance 400
 #define predators_view_distance 50
 
+
+#define pi 3.141592
 #define input_number 20
 #define internal_number 5
 #define output_number 2
-
+#define view_number 8 // Number of "viewer" lines, or "feelers", lingo pending
+#define view_angle 0.78539816339
 
 using namespace std::literals;
 using clock_type = std::chrono::high_resolution_clock;
@@ -58,7 +61,6 @@ public:
         }
     }
 };
-
 
 class Agent{
 public:
@@ -118,21 +120,31 @@ void draw(){
 
 
 
-
-
-
 __global__ void prey_process(Data* data) {
     int index = (blockIdx.x); //TODO work for thread and block split
+
+    data->prey[index].age ++;
+    data->prey[index].network.inputs[0] = data->prey[index].pos[0]; // Agent is spatially aware. This is probably worth testing on and off.
+    data->prey[index].network.inputs[1] = data->prey[index].pos[1];
+    data->prey[index].network.inputs[2] = data->prey[index].age;    // Probably will end up being completely irrelevant, will be interesting if they start acting different depending on age though.
+    data->prey[index].network.inputs[3] = data->prey[index].energy;
+    for (int n = 4; n < input_number; n++){ //Clear input values
+        data->prey[index].network.inputs[n] = -1;
+    }
+
     for (int n = 0; n < data->number_of_prey; n++){
         if (n == index) continue;
-        float distance[2] = {
+        float distance[3] = {
                 data->prey[n].pos[0]-data->prey[index].pos[0],
-                data->prey[n].pos[1]-data->prey[index].pos[1]
+                data->prey[n].pos[1]-data->prey[index].pos[1],
+                distance[0]*distance[0] + distance[1]*distance[1] // I cannot believe that it lets me do this
         };
 
-        if (distance[0]*distance[0] + distance[1]*distance[1] < prey_view_distance*prey_view_distance){
-            float angle = atan(distance[0]/distance[1]);
-            printf("%f\n", angle);
+
+        if (distance[2] < prey_view_distance*prey_view_distance){
+            float angle = atan2(distance[0], distance[1]);
+            int closest = (angle/view_angle)+4;
+            printf("Angle: %d\n", closest);
         }
     }
 
@@ -153,6 +165,7 @@ void FixedUpdate(){ // Fixed time updater
             prey_process<<<32, 1>>>(cuda_data);
             cudaDeviceSynchronize();
             cudaMemcpy(&data, cuda_data, sizeof (data), cudaMemcpyDeviceToHost);
+            paused = true;
         }
         std::this_thread::sleep_until(target_time);
         target_time += 30ms;
@@ -172,8 +185,8 @@ int main(int argc, char **argv) {
     data.number_of_prey = initial_prey;
 
     for (int n = 0; n < data.number_of_prey; n++){ //Scatter predators and prey
-        data.prey[n].pos[0] = 1000*((float) rand())/(RAND_MAX);
-        data.prey[n].pos[1] = 1000*((float) rand())/(RAND_MAX);
+        data.prey[n].pos[0] = map_size_x*((float) rand())/(RAND_MAX);
+        data.prey[n].pos[1] = map_size_y*((float) rand())/(RAND_MAX);
     }
     for (int n = 0; n < data.number_predators; n++){
         data.predators[n].pos[0] = 1000*((float) rand())/(RAND_MAX);
