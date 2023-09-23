@@ -3,7 +3,7 @@
 #include <SDL2/SDL.h>
 #include <thread>
 #include <vector>
-#include <math.h>
+#include <cmath>
 
 #define max_prey 100
 #define max_predators 50
@@ -15,7 +15,7 @@
 #define prey_max_turn_speed 1
 #define predators_max_speed 1
 #define predators_max_turn_speed 1
-#define prey_view_distance 400
+#define prey_view_distance 50
 #define predators_view_distance 50
 
 
@@ -31,7 +31,7 @@ using clock_type = std::chrono::high_resolution_clock;
 
 
 class Network{
-private:
+public:
     float input_to_internal_weight[internal_number][input_number];
     float internal_bias[internal_number];
 
@@ -39,9 +39,9 @@ private:
     float output_bias[output_number];
 
     int internals[internal_number];
-public:
-    int inputs[input_number];
-    int outputs[output_number];
+
+    float inputs[input_number];
+    float outputs[output_number];
 
 
     void think(){
@@ -50,14 +50,14 @@ public:
             for (int i = 0; i < input_number; i++){
                 internals[n] += inputs[i]*input_to_internal_weight[n][i]; // This feels like it might be the wrong way round
             }
-            internals[n] = internals[n] / (1 + abs(internals[n]));
+            internals[n] = atan(internals[n]);
         }
         for (int n = 0; n < output_number; n++){ // internal -> outputs
             outputs[n] = output_bias[n];
             for (int i = 0; i < internal_number; i++){
                 outputs[n] += internals[i]*internal_to_output_weight[n][i]; // This feels like it might be the wrong way round
             }
-            outputs[n] = outputs[n] / (1 + abs(outputs[n]));
+            outputs[n] = atan(outputs[n]);
         }
     }
 };
@@ -121,6 +121,8 @@ void draw(){
 
 
 __global__ void prey_process(Data* data) {
+
+
     int index = (blockIdx.x); //TODO work for thread and block split
 
     data->prey[index].age ++;
@@ -132,7 +134,8 @@ __global__ void prey_process(Data* data) {
         data->prey[index].network.inputs[n] = -1;
     }
 
-    for (int n = 0; n < data->number_of_prey; n++){
+    //For now not bothering with other prey
+    /*for (int n = 0; n < data->number_of_prey; n++){ //TODO remove duplicate code
         if (n == index) continue;
         float distance[3] = {
                 data->prey[n].pos[0]-data->prey[index].pos[0],
@@ -144,9 +147,57 @@ __global__ void prey_process(Data* data) {
         if (distance[2] < prey_view_distance*prey_view_distance){
             float angle = atan2(distance[0], distance[1]);
             int closest = (angle/view_angle)+4;
-            printf("Angle: %d\n", closest);
+            if (data->prey[index].network.inputs[closest+4] < (25/sqrt(distance[2]))){
+                data->prey[index].network.inputs[closest+4] = (25/sqrt(distance[2]));
+                data->prey[index].network.inputs[closest+12] = 0; // Prey; 0, food; 1, predator; 2.
+//                printf("New prey!: %f, %f, %d\n", data->prey[index].network.inputs[closest+4], sqrt(distance[2]), (int) data->prey[index].network.inputs[closest+12]);
+            }
+        }
+    }*/
+
+    for (int n = 0; n < data->number_predators; n++){
+        if (n == index) continue;
+        float distance[3] = {
+                data->predators[n].pos[0]-data->prey[index].pos[0],
+                data->predators[n].pos[1]-data->prey[index].pos[1],
+                distance[0]*distance[0] + distance[1]*distance[1] // I cannot believe that it lets me do this
+        };
+
+
+        if (distance[2] < prey_view_distance*prey_view_distance){
+            float angle = atan2(distance[0], distance[1]);
+            int closest = (angle/view_angle)+4;
+            if (data->prey[index].network.inputs[closest+4] < (25/sqrt(distance[2]))){
+                data->prey[index].network.inputs[closest+4] = (25/sqrt(distance[2]));
+//                data->prey[index].network.inputs[closest+12] = 2; // Prey; 0, food; 1, predator; 2.
+//                printf("New prey!: %f, %f, %d\n", data->prey[index].network.inputs[closest+4], sqrt(distance[2]), (int) data->prey[index].network.inputs[closest+12]);
+            }
         }
     }
+
+//    data->prey[index].network.think();
+
+    for (int n = 0; n < internal_number; n++){ // Input -> internals
+        data->prey[index].network.internals[n] = data->prey[index].network.internal_bias[n];
+        for (int i = 0; i < input_number; i++){
+            data->prey[index].network.internals[n] += data->prey[index].network.inputs[i]*data->prey[index].network.input_to_internal_weight[n][i]; // This feels like it might be the wrong way round
+        }
+        data->prey[index].network.internals[n] = 1 / (1 + pow(2.718, data->prey[index].network.internals[n])); //Sigmoid (?)
+    }
+    for (int n = 0; n < output_number; n++){ // internal -> outputs
+        data->prey[index].network.outputs[n] = data->prey[index].network.output_bias[n];
+        for (int i = 0; i < internal_number; i++){
+            data->prey[index].network.outputs[n] += data->prey[index].network.internals[i]*data->prey[index].network.internal_to_output_weight[n][i]; // This feels like it might be the wrong way round
+        }
+        data->prey[index].network.outputs[n] = 1 / (1 + pow(2.718, data->prey[index].network.outputs[n]));
+
+    }
+
+
+
+    data->prey[index].direction += data->prey[index].network.outputs[1]*prey_max_turn_speed;
+    data->prey[index].pos[0] += prey_max_speed*sin(data->prey[index].direction);
+    data->prey[index].pos[1] += prey_max_speed*cos(data->prey[index].direction);
 
     return;
 }
