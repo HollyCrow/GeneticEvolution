@@ -11,7 +11,6 @@
 #define output_number 2
 #define view_number 8 // Number of "viewer" lines, or "feelers", lingo pending
 #define view_angle 0.78539816339
-
 #define max_prey 100
 #define max_predators 50
 #define initial_prey 50
@@ -58,42 +57,58 @@ struct Data{
     int tick;
 };
 
+const int screen_width = 1000; // Variables for libs etc. Not needed to change much.
+const int screen_height = 1000;
+SDL_Window* window = nullptr;
+SDL_Renderer* renderer = nullptr;
+bool running = true;
+bool paused = false;
+Data data;
+Data *cuda_data;
 
 
-__global__ void prey_process(Data* data) {
 
-
-    int index = (blockIdx.x); //TODO work for thread and block split
-
-    data->prey[index].age ++;
-    data->prey[index].network.inputs[0] = data->prey[index].pos[0]; // Agent is spatially aware. This is probably worth testing on and off.
-    data->prey[index].network.inputs[1] = data->prey[index].pos[1];
-    data->prey[index].network.inputs[2] = data->prey[index].age;    // Probably will end up being completely irrelevant, will be interesting if they start acting different depending on age though.
-    data->prey[index].network.inputs[3] = data->prey[index].energy;
+__device__ void agent_update_initial(Agent* agent, int index){
+    agent[index].age ++;
+    agent[index].network.inputs[0] = agent[index].pos[0]; // Agent is spatially aware. This is probably worth testing on and off.
+    agent[index].network.inputs[1] = agent[index].pos[1];
+    agent[index].network.inputs[2] = agent[index].age;    // Probably will end up being completely irrelevant, will be interesting if they start acting different depending on age though.
+    agent[index].network.inputs[3] = agent[index].energy;
     for (int n = 4; n < input_number; n++){ //Clear input values
-        data->prey[index].network.inputs[n] = -1;
+        agent[index].network.inputs[n] = -1;
     }
-    //For now not bothering with other prey
-    /*for (int n = 0; n < data->number_of_prey; n++){ //TODO remove duplicate code
-        if (n == index) continue;
-        float distance[3] = {
-                data->prey[n].pos[0]-data->prey[index].pos[0],
-                data->prey[n].pos[1]-data->prey[index].pos[1],
-                distance[0]*distance[0] + distance[1]*distance[1] // I cannot believe that it lets me do this
-        };
-
-
-        if (distance[2] < prey_view_distance*prey_view_distance){
-            float angle = atan2(distance[0], distance[1]);
-            int closest = (angle/view_angle)+4;
-            if (data->prey[index].network.inputs[closest+4] < (25/sqrt(distance[2]))){
-                data->prey[index].network.inputs[closest+4] = (25/sqrt(distance[2]));
-                data->prey[index].network.inputs[closest+12] = 0; // Prey; 0, food; 1, predator; 2.
-//                printf("New prey!: %f, %f, %d\n", data->prey[index].network.inputs[closest+4], sqrt(distance[2]), (int) data->prey[index].network.inputs[closest+12]);
-            }
+}
+__device__ void agent_think(Agent* agent, int index){
+    for (int n = 0; n < internal_number; n++){ // Input -> internals
+        agent[index].network.internals[n] = agent[index].network.internal_bias[n];
+        for (int i = 0; i < input_number; i++){
+            agent[index].network.internals[n] += agent[index].network.inputs[i]*agent[index].network.input_to_internal_weight[n][i]; // This feels like it might be the wrong way round
         }
-    }*/
-    for (int n = 0; n < data->number_predators; n++){
+        agent[index].network.internals[n] = 1 - (2 / (1 + pow(e, agent[index].network.internals[n]))); //Sigmoid (?)
+    }
+    for (int n = 0; n < output_number; n++){ // internal -> outputs
+        agent[index].network.outputs[n] = agent[index].network.output_bias[n];
+        for (int i = 0; i < internal_number; i++){
+            agent[index].network.outputs[n] += agent[index].network.internals[i]*agent[index].network.internal_to_output_weight[n][i]; // This feels like it might be the wrong way round
+        }
+        agent[index].network.outputs[n] = 1 - (2 / (1 + pow(e, agent[index].network.outputs[n])));
+    }
+}
+__device__ void agent_update_final(Agent* agent, int index){
+    agent[index].direction += (agent[index].network.outputs[1])*prey_max_turn_speed;
+    float speed = (agent[index].network.outputs[0])*prey_max_speed;
+    agent[index].pos[0] += sin(agent[index].direction)*speed;
+    agent[index].pos[1] += cos(agent[index].direction)*speed;
+}
+
+
+__global__ void prey_process(Data* data) { // Unsure weather to merge this and predator_process into one function.
+    int index = (blockIdx.x); //TODO work for thread and block split
+//    if (index >= data->number_of_prey){index -= data->number_of_prey;} // Allows prey and predators to work on the same function.
+    agent_update_initial(data->prey, index);
+
+    for (int n = 0; n < data->number_predators; n++) // Set inputs. Decided to not move this to its own function for now.
+    {
         if (n == index) continue;
         float distance[3] = {
                 data->predators[n].pos[0]-data->prey[index].pos[0],
@@ -110,84 +125,44 @@ __global__ void prey_process(Data* data) {
             }
         }
     }
-    for (int n = 0; n < internal_number; n++){ // Input -> internals
-        data->prey[index].network.internals[n] = data->prey[index].network.internal_bias[n];
-        for (int i = 0; i < input_number; i++){
-            data->prey[index].network.internals[n] += data->prey[index].network.inputs[i]*data->prey[index].network.input_to_internal_weight[n][i]; // This feels like it might be the wrong way round
-        }
-        data->prey[index].network.internals[n] = 1 - (2 / (1 + pow(e, data->prey[index].network.internals[n]))); //Sigmoid (?)
-    }
-    for (int n = 0; n < output_number; n++){ // internal -> outputs
-        data->prey[index].network.outputs[n] = data->prey[index].network.output_bias[n];
-        for (int i = 0; i < internal_number; i++){
-            data->prey[index].network.outputs[n] += data->prey[index].network.internals[i]*data->prey[index].network.internal_to_output_weight[n][i]; // This feels like it might be the wrong way round
-        }
-        data->prey[index].network.outputs[n] = 1 - (2 / (1 + pow(e, data->prey[index].network.outputs[n])));
-    }
-
-    data->prey[index].direction += (data->prey[index].network.outputs[1])*prey_max_turn_speed;
-    float speed = (data->prey[index].network.outputs[0])*prey_max_speed;
-    data->prey[index].pos[0] += sin(data->prey[index].direction)*speed;
-    data->prey[index].pos[1] += cos(data->prey[index].direction)*speed;
-
-    return;
+    agent_think(data->prey, index);
+    agent_update_final(data->prey, index);
 }
-__global__ void predator_process(Data* data) {
 
+
+
+
+__global__ void predator_process(Data* data){
     int index = (blockIdx.x); //TODO work for thread and block split
+//    if (index >= data->number_of_prey){index -= data->number_of_prey;} // Allows prey and predators to work on the same function.
+    agent_update_initial(data->predators, index);
 
-    data->predators[index].age ++;
-    data->predators[index].network.inputs[0] = data->predators[index].pos[0]; // Agent is spatially aware. This is probably worth testing on and off.
-    data->predators[index].network.inputs[1] = data->predators[index].pos[1];
-    data->predators[index].network.inputs[2] = data->predators[index].age;    // Probably will end up being completely irrelevant, will be interesting if they start acting different depending on age though.
-    data->predators[index].network.inputs[3] = data->predators[index].energy;
-    for (int n = 4; n < input_number; n++){ //Clear input values
-        data->predators[index].network.inputs[n] = -1;
-    }
-
-    for (int n = 0; n < data->number_predators; n++){
+    for (int n = 0; n < data->number_of_prey; n++) // Set inputs. Decided to not move this to its own function for now.
+    {
         if (n == index) continue;
         float distance[3] = {
-                data->predators[n].pos[0]-data->predators[index].pos[0],
-                data->predators[n].pos[1]-data->predators[index].pos[1],
+                data->predators[index].pos[0]-data->prey[n].pos[0],
+                data->predators[index].pos[1]-data->prey[n].pos[1],
                 distance[0]*distance[0] + distance[1]*distance[1] // I cannot believe that it lets me do this
         };
-
-
         if (distance[2] < predators_view_distance*predators_view_distance){
             float angle = atan2(distance[0], distance[1]);
             int closest = (angle/view_angle)+4;
             if (data->predators[index].network.inputs[closest+4] < (25/sqrt(distance[2]))){
                 data->predators[index].network.inputs[closest+4] = (25/sqrt(distance[2]));
+//                data->prey[index].network.inputs[closest+12] = 2; // Prey; 0, food; 1, predator; 2.
+//                printf("New prey!: %f, %f, %d\n", data->prey[index].network.inputs[closest+4], sqrt(distance[2]), (int) data->prey[index].network.inputs[closest+12]);
             }
         }
     }
-
-    for (int n = 0; n < internal_number; n++){ // Input -> internals
-        data->predators[index].network.internals[n] = data->predators[index].network.internal_bias[n];
-        for (int i = 0; i < input_number; i++){
-            data->predators[index].network.internals[n] += data->predators[index].network.inputs[i]*data->predators[index].network.input_to_internal_weight[n][i]; // This feels like it might be the wrong way round
-        }
-        data->predators[index].network.internals[n] = 1 - (2 / (1 + pow(e, data->predators[index].network.internals[n]))); //Sigmoid (?)
-    }
-    for (int n = 0; n < output_number; n++){ // internal -> outputs
-        data->predators[index].network.outputs[n] = data->predators[index].network.output_bias[n];
-        for (int i = 0; i < internal_number; i++){
-            data->predators[index].network.outputs[n] += data->predators[index].network.internals[i]*data->predators[index].network.internal_to_output_weight[n][i]; // This feels like it might be the wrong way round
-        }
-        data->predators[index].network.outputs[n] = 1 - (2 / (1 + pow(e, data->predators[index].network.outputs[n])));
-    }
-
-
-    data->predators[index].direction += (data->predators[index].network.outputs[1])*predators_max_turn_speed;
-
-    float speed = (data->predators[index].network.outputs[0])*predators_max_speed;
-    data->predators[index].pos[0] += sin(data->predators[index].direction)*speed;
-    data->predators[index].pos[1] += cos(data->predators[index].direction)*speed;
-    return;
+    agent_think(data->predators, index);
+    agent_update_final(data->predators, index);
 }
 
-void FixedUpdate(){ // Fixed time updater
+
+
+void FixedUpdate()// Fixed time updater
+{
     auto target_time = clock_type::now() + 30ms;
     while (running) {
         if (!paused){
@@ -196,13 +171,14 @@ void FixedUpdate(){ // Fixed time updater
             predator_process<<<25, 1>>>(cuda_data);
             cudaDeviceSynchronize();
             cudaMemcpy(&data, cuda_data, sizeof (data), cudaMemcpyDeviceToHost);
-            paused = false;
+//            paused = true;
         }
         std::this_thread::sleep_until(target_time);
         target_time += 30ms;
     }
 }
-void draw(){
+void draw() // Unlocked screen updater
+{
     SDL_SetRenderDrawColor(renderer, 0,0,0,255);
     SDL_RenderClear(renderer);
 
@@ -217,9 +193,8 @@ void draw(){
 
     SDL_RenderPresent(renderer);
 }
-
-
-void randomise_start(){
+void randomise_start() // Function to initially randomise the neural network and scatter the agents around the map.
+{
     for (int n = 0; n < data.number_of_prey; n++){ //Scatter predators and prey
         data.prey[n].pos[0] = map_size_x*2*((float) rand())/((float)RAND_MAX);
         data.prey[n].pos[1] = map_size_y*2*((float) rand())/((float)RAND_MAX);
@@ -272,8 +247,6 @@ int main(int argc, char **argv) {
     data.number_of_prey = initial_prey;
 
     randomise_start();
-
-
     cudaMalloc(&cuda_data, sizeof (data));
     cudaMemcpy(cuda_data, &data, sizeof (data), cudaMemcpyHostToDevice);
 
@@ -300,3 +273,9 @@ int main(int argc, char **argv) {
 
     return 0;
 }
+
+
+
+
+
+
