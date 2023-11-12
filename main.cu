@@ -6,7 +6,7 @@
 
 #define pi 3.141592
 #define e 2.71828
-#define input_number 21
+#define input_number 20
 #define internal_number 5
 #define output_number 2
 #define view_number 8 // Number of "viewer" lines, or "feelers", lingo pending
@@ -23,6 +23,16 @@
 #define predators_max_turn_speed 0.1
 #define prey_view_distance 100
 #define predators_view_distance 100
+#define predator_eat_distance 64 // Squared
+
+#define prey_slow_energy_gain 4 // Energy gained per tick by prey when moving slowly
+#define predator_eat_energy 300
+#define prey_max_energy 500
+#define predator_max_energy 500
+#define predator_energy_loss 1
+#define prey_energy_loss 1
+#define prey_slow_energy 100 // Energy below which the prey have to move slow
+#define prey_slow_rate 0.3  // Speed traveled when slow as a fraction of prey_max_speed
 
 using namespace std::literals;
 using clock_type = std::chrono::high_resolution_clock;
@@ -111,17 +121,27 @@ __device__ void agent_update_final(Agent* agent, int index){
 __global__ void prey_process(Data* data) { // Unsure weather to merge this and predator_process into one function.
     int index = (blockIdx.x); //TODO work for thread and block split
 //    if (index >= data->number_of_prey){index -= data->number_of_prey;} // Allows prey and predators to work on the same function.
+    if (data->prey[index].dead){
+        data->prey[index].pos[0] = 0;
+        data->prey[index].pos[1] = 0;
+        return;
+    }
     agent_update_initial(data->prey, index);
+
 
     for (int n = 0; n < data->number_of_predators; n++) // Set inputs. Decided to not move this to its own function for now.
     {
-        if (n == index) continue;
+//        if (n == index) continue;
         float distance[3] = {
                 data->predators[n].pos[0]-data->prey[index].pos[0],
                 data->predators[n].pos[1]-data->prey[index].pos[1],
                 distance[0]*distance[0] + distance[1]*distance[1] // I cannot believe that it lets me do this
         };
         if (distance[2] < prey_view_distance*prey_view_distance){
+            if (distance[2] < predator_eat_distance){
+                data->prey[index].dead = true;
+                return;
+            }
             float angle = atan2(distance[0], distance[1]) - data->prey[index].direction;
             int closest = (angle/view_angle)+4;
             if (data->prey[index].network.inputs[closest+4] < (25/sqrt(distance[2]))){
@@ -131,7 +151,10 @@ __global__ void prey_process(Data* data) { // Unsure weather to merge this and p
             }
         }
     }
-    data->prey[index].network.inputs[20] = data->prey[index].energy;
+    float speed = (data->prey[index].network.outputs[0])*prey_max_speed;
+    data->prey[index].energy -= prey_energy_loss;
+    if ((speed*speed) < (prey_slow_rate*prey_max_speed*prey_slow_rate*prey_max_speed)){data->prey[index].energy += prey_slow_energy_gain;} // Squared because speed can be negative.
+//    if (data->prey[index].energy <= 0){data->prey[index].dead = true;} // Kinda a redundant check.
 
     agent_think(data->prey, index);
     agent_update_final(data->prey, index);
@@ -139,11 +162,18 @@ __global__ void prey_process(Data* data) { // Unsure weather to merge this and p
 __global__ void predator_process(Data* data){
     int index = (blockIdx.x); //TODO work for thread and block split
 //    if (index >= data->number_of_prey){index -= data->number_of_prey;} // Allows prey and predators to work on the same function.
+    if (data->predators[index].dead){
+        data->predators[index].pos[0] = 0;
+        data->predators[index].pos[1] = 0;
+        return;
+    }
+
     agent_update_initial(data->predators, index);
+    bool eaten_this_tick = false;
 
     for (int n = 0; n < data->number_of_prey; n++) // Set inputs. Decided to not move this to its own function for now.
     {
-        if (n == index) continue;
+//        if (n == index) continue; // not sure why that's there?
         float distance[3] = {
                 data->predators[index].pos[0]-data->prey[n].pos[0],
                 data->predators[index].pos[1]-data->prey[n].pos[1],
@@ -154,11 +184,18 @@ __global__ void predator_process(Data* data){
             int closest = (angle/view_angle)+4;
             if (data->predators[index].network.inputs[closest+4] < (25/sqrt(distance[2]))){
                 data->predators[index].network.inputs[closest+4] = (25/sqrt(distance[2]));
+                if (distance[2] < predator_eat_distance){
+                    eaten_this_tick = true;
+                }
 //                data->prey[index].network.inputs[closest+12] = 2; // Prey; 0, food; 1, predator; 2.
 //                printf("New prey!: %f, %f, %d\n", data->prey[index].network.inputs[closest+4], sqrt(distance[2]), (int) data->prey[index].network.inputs[closest+12]);
             }
         }
     }
+    data->predators[index].energy -= predator_energy_loss;
+    if (eaten_this_tick){data->predators[index].energy += predator_eat_energy;}
+    if (data->predators[index].energy <= 0){data->predators[index].dead = true;}
+
     agent_think(data->predators, index);
     agent_update_final(data->predators, index);
 }
@@ -201,6 +238,7 @@ void randomise_start() // Function to initially randomise the neural network and
     for (int n = 0; n < data.number_of_prey; n++){ //Scatter predators and prey
         data.prey[n].pos[0] = map_size_x*((float) rand())/((float)RAND_MAX);
         data.prey[n].pos[1] = map_size_y*((float) rand())/((float)RAND_MAX);
+        data.prey[n].energy = prey_max_energy;
 
         for (int m = 0; m < internal_number; m++){ // Input -> internals
             data.prey[n].network.internal_bias[m] = (rand()/((float)RAND_MAX)) - 0.5;
@@ -220,6 +258,7 @@ void randomise_start() // Function to initially randomise the neural network and
         printf("Predator randomised: %d\n", n);
         data.predators[n].pos[0] = map_size_x*((float) rand())/((float)RAND_MAX);
         data.predators[n].pos[1] = map_size_y*((float) rand())/((float)RAND_MAX);
+        data.predators[n].energy = predator_max_energy;
 
         for (int m = 0; m < internal_number; m++){ // Input -> internals
             data.predators[n].network.internal_bias[m] = rand()/((float)RAND_MAX) - 0.5;
