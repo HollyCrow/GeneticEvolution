@@ -157,6 +157,7 @@ __global__ void prey_process(Data* data) { // Unsure weather to merge this and p
 //    if (data->prey[index].energy <= 0){data->prey[index].dead = true;} // Kinda a redundant check.
 
     agent_think(data->prey, index);
+    if (data->prey[index].energy < prey_slow_energy){data->prey[index].network.outputs[0] = data->prey[index].network.outputs[0]*prey_slow_rate;} // Janky much
     agent_update_final(data->prey, index);
 }
 __global__ void predator_process(Data* data){
@@ -233,6 +234,7 @@ void draw() // Unlocked screen updater
 
     SDL_RenderPresent(renderer);
 }
+
 void randomise_start() // Function to initially randomise the neural network and scatter the agents around the map.
 {
     for (int n = 0; n < data.number_of_prey; n++){ //Scatter predators and prey
