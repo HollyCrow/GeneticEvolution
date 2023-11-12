@@ -46,6 +46,7 @@ public:
     float direction;
     float energy;
     float age;
+    bool dead;
 
     Network network;
 };
@@ -53,7 +54,7 @@ struct Data{
     Agent prey[max_prey];
     Agent predators[max_predators];
     int number_of_prey;
-    int number_predators;
+    int number_of_predators;
     int tick;
 };
 
@@ -99,6 +100,11 @@ __device__ void agent_update_final(Agent* agent, int index){
     float speed = (agent[index].network.outputs[0])*prey_max_speed;
     agent[index].pos[0] += sin(agent[index].direction)*speed;
     agent[index].pos[1] += cos(agent[index].direction)*speed;
+
+//    if (agent[index].pos[0] > map_size_x){agent[index].pos[0] -= map_size_x;            // Move agent off the board back to the other side
+//    }else if (agent[index].pos[0] < map_size_x){agent[index].pos[0] += map_size_x;}     // Causes the agents to flash for some bizarre reason?
+//    if (agent[index].pos[1] > map_size_y){agent[index].pos[1] -= map_size_y;}         // Disabled for now as it's not that important.
+//    else if (agent[index].pos[1] < map_size_y){agent[index].pos[1] += map_size_y;}
 }
 
 
@@ -107,7 +113,7 @@ __global__ void prey_process(Data* data) { // Unsure weather to merge this and p
 //    if (index >= data->number_of_prey){index -= data->number_of_prey;} // Allows prey and predators to work on the same function.
     agent_update_initial(data->prey, index);
 
-    for (int n = 0; n < data->number_predators; n++) // Set inputs. Decided to not move this to its own function for now.
+    for (int n = 0; n < data->number_of_predators; n++) // Set inputs. Decided to not move this to its own function for now.
     {
         if (n == index) continue;
         float distance[3] = {
@@ -156,15 +162,14 @@ __global__ void predator_process(Data* data){
 }
 
 
-
 void FixedUpdate()// Fixed time updater
 {
     auto target_time = clock_type::now() + 30ms;
     while (running) {
         if (!paused){
             //TODO actual processing
-            prey_process<<<50, 1>>>(cuda_data);
-            predator_process<<<25, 1>>>(cuda_data);
+            prey_process<<<data.number_of_prey, 1>>>(cuda_data);
+            predator_process<<<data.number_of_predators, 1>>>(cuda_data);
             cudaDeviceSynchronize();
             cudaMemcpy(&data, cuda_data, sizeof (data), cudaMemcpyDeviceToHost);
 //            paused = true;
@@ -192,8 +197,8 @@ void draw() // Unlocked screen updater
 void randomise_start() // Function to initially randomise the neural network and scatter the agents around the map.
 {
     for (int n = 0; n < data.number_of_prey; n++){ //Scatter predators and prey
-        data.prey[n].pos[0] = map_size_x*2*((float) rand())/((float)RAND_MAX);
-        data.prey[n].pos[1] = map_size_y*2*((float) rand())/((float)RAND_MAX);
+        data.prey[n].pos[0] = map_size_x*((float) rand())/((float)RAND_MAX);
+        data.prey[n].pos[1] = map_size_y*((float) rand())/((float)RAND_MAX);
 
         for (int m = 0; m < internal_number; m++){ // Input -> internals
             data.prey[n].network.internal_bias[m] = (rand()/((float)RAND_MAX)) - 0.5;
@@ -209,10 +214,10 @@ void randomise_start() // Function to initially randomise the neural network and
 
         }
     }
-    for (int n = 0; n < data.number_predators; n++){
+    for (int n = 0; n < data.number_of_predators; n++){
         printf("Predator randomised: %d\n", n);
-        data.predators[n].pos[0] = map_size_x*2*((float) rand())/((float)RAND_MAX);
-        data.predators[n].pos[1] = map_size_y*2*((float) rand())/((float)RAND_MAX);
+        data.predators[n].pos[0] = map_size_x*((float) rand())/((float)RAND_MAX);
+        data.predators[n].pos[1] = map_size_y*((float) rand())/((float)RAND_MAX);
 
         for (int m = 0; m < internal_number; m++){ // Input -> internals
             data.predators[n].network.internal_bias[m] = rand()/((float)RAND_MAX) - 0.5;
@@ -236,10 +241,10 @@ int main(int argc, char **argv) {
 
     SDL_Init(SDL_INIT_VIDEO);
     SDL_CreateWindowAndRenderer(screen_width, screen_height, 0, &window, &renderer);
-    SDL_RenderSetScale(renderer,1,1);
+    SDL_RenderSetScale(renderer,2,2);
     SDL_SetWindowTitle(window, "Genetic evolution");
 
-    data.number_predators = initial_predators;
+    data.number_of_predators = initial_predators;
     data.number_of_prey = initial_prey;
 
     randomise_start();
