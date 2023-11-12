@@ -6,7 +6,7 @@
 
 #define pi 3.141592
 #define e 2.71828
-#define input_number 20
+#define input_number 21
 #define internal_number 5
 #define output_number 2
 #define view_number 8 // Number of "viewer" lines, or "feelers", lingo pending
@@ -131,6 +131,8 @@ __global__ void prey_process(Data* data) { // Unsure weather to merge this and p
             }
         }
     }
+    data->prey[index].network.inputs[20] = data->prey[index].energy;
+
     agent_think(data->prey, index);
     agent_update_final(data->prey, index);
 }
