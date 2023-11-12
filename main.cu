@@ -2,8 +2,15 @@
 #include <stdio.h>
 #include <SDL2/SDL.h>
 #include <thread>
-#include <vector>
 #include <cmath>
+
+#define pi 3.141592
+#define e 2.71828
+#define input_number 20
+#define internal_number 5
+#define output_number 2
+#define view_number 8 // Number of "viewer" lines, or "feelers", lingo pending
+#define view_angle 0.78539816339
 
 #define max_prey 100
 #define max_predators 50
@@ -11,26 +18,17 @@
 #define initial_predators 25
 #define map_size_x 500
 #define map_size_y 500
-#define prey_max_speed 1
-#define prey_max_turn_speed 1
-#define predators_max_speed 1
-#define predators_max_turn_speed 1
-#define prey_view_distance 50
-#define predators_view_distance 50
-
-
-#define pi 3.141592
-#define input_number 20
-#define internal_number 5
-#define output_number 2
-#define view_number 8 // Number of "viewer" lines, or "feelers", lingo pending
-#define view_angle 0.78539816339
+#define prey_max_speed 2
+#define prey_max_turn_speed 0.1
+#define predators_max_speed 2
+#define predators_max_turn_speed 0.1
+#define prey_view_distance 100
+#define predators_view_distance 100
 
 using namespace std::literals;
 using clock_type = std::chrono::high_resolution_clock;
 
-
-class Network{
+struct Network{
 public:
     float input_to_internal_weight[internal_number][input_number];
     float internal_bias[internal_number];
@@ -42,27 +40,8 @@ public:
 
     float inputs[input_number];
     float outputs[output_number];
-
-
-    void think(){
-        for (int n = 0; n < internal_number; n++){ // Input -> internals
-            internals[n] = internal_bias[n];
-            for (int i = 0; i < input_number; i++){
-                internals[n] += inputs[i]*input_to_internal_weight[n][i]; // This feels like it might be the wrong way round
-            }
-            internals[n] = atan(internals[n]);
-        }
-        for (int n = 0; n < output_number; n++){ // internal -> outputs
-            outputs[n] = output_bias[n];
-            for (int i = 0; i < internal_number; i++){
-                outputs[n] += internals[i]*internal_to_output_weight[n][i]; // This feels like it might be the wrong way round
-            }
-            outputs[n] = atan(outputs[n]);
-        }
-    }
 };
-
-class Agent{
+struct Agent{
 public:
     float pos[2];
     float direction;
@@ -70,27 +49,7 @@ public:
     float age;
 
     Network network;
-
-    Agent(float x, float y){
-        this->pos[0] = x;
-        this->pos[1] = y;
-    }
-    Agent(){
-        this->pos[0] = 100;
-        this->pos[1] = 100;
-    }
 };
-
-
-const int screen_width = 1000;
-const int screen_height = 1000;
-SDL_Window* window = nullptr;
-SDL_Renderer* renderer = nullptr;
-
-bool running = true;
-bool paused = false;
-
-
 struct Data{
     Agent prey[max_prey];
     Agent predators[max_predators];
@@ -98,25 +57,6 @@ struct Data{
     int number_predators;
     int tick;
 };
-Data data;
-Data *cuda_data;
-
-
-void draw(){
-    SDL_SetRenderDrawColor(renderer, 0,0,0,255);
-    SDL_RenderClear(renderer);
-
-    SDL_SetRenderDrawColor(renderer, 0,255,0,255);
-    for (int n = 0; n < data.number_of_prey; n++){
-        SDL_RenderDrawPoint(renderer, (int) data.prey[n].pos[0], (int) data.prey[n].pos[1]);
-    }
-    SDL_SetRenderDrawColor(renderer, 255,0,0,255);
-    for (int n = 0; n < data.number_of_prey; n++){
-        SDL_RenderDrawPoint(renderer, (int) data.predators[n].pos[0], (int) data.predators[n].pos[1]);
-    }
-
-    SDL_RenderPresent(renderer);
-}
 
 
 
@@ -133,7 +73,6 @@ __global__ void prey_process(Data* data) {
     for (int n = 4; n < input_number; n++){ //Clear input values
         data->prey[index].network.inputs[n] = -1;
     }
-
     //For now not bothering with other prey
     /*for (int n = 0; n < data->number_of_prey; n++){ //TODO remove duplicate code
         if (n == index) continue;
@@ -154,7 +93,6 @@ __global__ void prey_process(Data* data) {
             }
         }
     }*/
-
     for (int n = 0; n < data->number_predators; n++){
         if (n == index) continue;
         float distance[3] = {
@@ -162,8 +100,6 @@ __global__ void prey_process(Data* data) {
                 data->predators[n].pos[1]-data->prey[index].pos[1],
                 distance[0]*distance[0] + distance[1]*distance[1] // I cannot believe that it lets me do this
         };
-
-
         if (distance[2] < prey_view_distance*prey_view_distance){
             float angle = atan2(distance[0], distance[1]);
             int closest = (angle/view_angle)+4;
@@ -174,37 +110,80 @@ __global__ void prey_process(Data* data) {
             }
         }
     }
-
-//    data->prey[index].network.think();
-
     for (int n = 0; n < internal_number; n++){ // Input -> internals
         data->prey[index].network.internals[n] = data->prey[index].network.internal_bias[n];
         for (int i = 0; i < input_number; i++){
             data->prey[index].network.internals[n] += data->prey[index].network.inputs[i]*data->prey[index].network.input_to_internal_weight[n][i]; // This feels like it might be the wrong way round
         }
-        data->prey[index].network.internals[n] = 1 / (1 + pow(2.718, data->prey[index].network.internals[n])); //Sigmoid (?)
+        data->prey[index].network.internals[n] = 1 - (2 / (1 + pow(e, data->prey[index].network.internals[n]))); //Sigmoid (?)
     }
     for (int n = 0; n < output_number; n++){ // internal -> outputs
         data->prey[index].network.outputs[n] = data->prey[index].network.output_bias[n];
         for (int i = 0; i < internal_number; i++){
             data->prey[index].network.outputs[n] += data->prey[index].network.internals[i]*data->prey[index].network.internal_to_output_weight[n][i]; // This feels like it might be the wrong way round
         }
-        data->prey[index].network.outputs[n] = 1 / (1 + pow(2.718, data->prey[index].network.outputs[n]));
-
+        data->prey[index].network.outputs[n] = 1 - (2 / (1 + pow(e, data->prey[index].network.outputs[n])));
     }
 
-
-
-    data->prey[index].direction += data->prey[index].network.outputs[1]*prey_max_turn_speed;
-    data->prey[index].pos[0] += prey_max_speed*sin(data->prey[index].direction);
-    data->prey[index].pos[1] += prey_max_speed*cos(data->prey[index].direction);
+    data->prey[index].direction += (data->prey[index].network.outputs[1])*prey_max_turn_speed;
+    float speed = (data->prey[index].network.outputs[0])*prey_max_speed;
+    data->prey[index].pos[0] += sin(data->prey[index].direction)*speed;
+    data->prey[index].pos[1] += cos(data->prey[index].direction)*speed;
 
     return;
 }
 __global__ void predator_process(Data* data) {
+
     int index = (blockIdx.x); //TODO work for thread and block split
 
+    data->predators[index].age ++;
+    data->predators[index].network.inputs[0] = data->predators[index].pos[0]; // Agent is spatially aware. This is probably worth testing on and off.
+    data->predators[index].network.inputs[1] = data->predators[index].pos[1];
+    data->predators[index].network.inputs[2] = data->predators[index].age;    // Probably will end up being completely irrelevant, will be interesting if they start acting different depending on age though.
+    data->predators[index].network.inputs[3] = data->predators[index].energy;
+    for (int n = 4; n < input_number; n++){ //Clear input values
+        data->predators[index].network.inputs[n] = -1;
+    }
 
+    for (int n = 0; n < data->number_predators; n++){
+        if (n == index) continue;
+        float distance[3] = {
+                data->predators[n].pos[0]-data->predators[index].pos[0],
+                data->predators[n].pos[1]-data->predators[index].pos[1],
+                distance[0]*distance[0] + distance[1]*distance[1] // I cannot believe that it lets me do this
+        };
+
+
+        if (distance[2] < predators_view_distance*predators_view_distance){
+            float angle = atan2(distance[0], distance[1]);
+            int closest = (angle/view_angle)+4;
+            if (data->predators[index].network.inputs[closest+4] < (25/sqrt(distance[2]))){
+                data->predators[index].network.inputs[closest+4] = (25/sqrt(distance[2]));
+            }
+        }
+    }
+
+    for (int n = 0; n < internal_number; n++){ // Input -> internals
+        data->predators[index].network.internals[n] = data->predators[index].network.internal_bias[n];
+        for (int i = 0; i < input_number; i++){
+            data->predators[index].network.internals[n] += data->predators[index].network.inputs[i]*data->predators[index].network.input_to_internal_weight[n][i]; // This feels like it might be the wrong way round
+        }
+        data->predators[index].network.internals[n] = 1 - (2 / (1 + pow(e, data->predators[index].network.internals[n]))); //Sigmoid (?)
+    }
+    for (int n = 0; n < output_number; n++){ // internal -> outputs
+        data->predators[index].network.outputs[n] = data->predators[index].network.output_bias[n];
+        for (int i = 0; i < internal_number; i++){
+            data->predators[index].network.outputs[n] += data->predators[index].network.internals[i]*data->predators[index].network.internal_to_output_weight[n][i]; // This feels like it might be the wrong way round
+        }
+        data->predators[index].network.outputs[n] = 1 - (2 / (1 + pow(e, data->predators[index].network.outputs[n])));
+    }
+
+
+    data->predators[index].direction += (data->predators[index].network.outputs[1])*predators_max_turn_speed;
+
+    float speed = (data->predators[index].network.outputs[0])*predators_max_speed;
+    data->predators[index].pos[0] += sin(data->predators[index].direction)*speed;
+    data->predators[index].pos[1] += cos(data->predators[index].direction)*speed;
     return;
 }
 
@@ -213,15 +192,72 @@ void FixedUpdate(){ // Fixed time updater
     while (running) {
         if (!paused){
             //TODO actual processing
-            prey_process<<<32, 1>>>(cuda_data);
+            prey_process<<<50, 1>>>(cuda_data);
+            predator_process<<<25, 1>>>(cuda_data);
             cudaDeviceSynchronize();
             cudaMemcpy(&data, cuda_data, sizeof (data), cudaMemcpyDeviceToHost);
-            paused = true;
+            paused = false;
         }
         std::this_thread::sleep_until(target_time);
         target_time += 30ms;
     }
 }
+void draw(){
+    SDL_SetRenderDrawColor(renderer, 0,0,0,255);
+    SDL_RenderClear(renderer);
+
+    SDL_SetRenderDrawColor(renderer, 0,255,0,255);
+    for (int n = 0; n < data.number_of_prey; n++){
+        SDL_RenderDrawPoint(renderer, (int) data.prey[n].pos[0], (int) data.prey[n].pos[1]);
+    }
+    SDL_SetRenderDrawColor(renderer, 255,0,0,255);
+    for (int n = 0; n < data.number_of_prey; n++){
+        SDL_RenderDrawPoint(renderer, (int) data.predators[n].pos[0], (int) data.predators[n].pos[1]);
+    }
+
+    SDL_RenderPresent(renderer);
+}
+
+
+void randomise_start(){
+    for (int n = 0; n < data.number_of_prey; n++){ //Scatter predators and prey
+        data.prey[n].pos[0] = map_size_x*2*((float) rand())/((float)RAND_MAX);
+        data.prey[n].pos[1] = map_size_y*2*((float) rand())/((float)RAND_MAX);
+
+        for (int m = 0; m < internal_number; m++){ // Input -> internals
+            data.prey[n].network.internal_bias[m] = (rand()/((float)RAND_MAX)) - 0.5;
+            for (int i = 0; i < input_number; i++){
+                data.prey[n].network.input_to_internal_weight[m][i] = (rand()/((float)RAND_MAX)) - 0.5;
+            }
+        }
+        for (int m = 0; m < output_number; m++){ // internal -> outputs
+            data.prey[n].network.output_bias[m] = (rand()/((float)RAND_MAX)) - 0.5;
+            for (int i = 0; i < internal_number; i++){
+                data.prey[n].network.internal_to_output_weight[m][i] = (rand()/((float)RAND_MAX)) - 0.5;
+            }
+
+        }
+    }
+    for (int n = 0; n < data.number_predators; n++){
+        printf("Predator randomised: %d\n", n);
+        data.predators[n].pos[0] = map_size_x*2*((float) rand())/((float)RAND_MAX);
+        data.predators[n].pos[1] = map_size_y*2*((float) rand())/((float)RAND_MAX);
+
+        for (int m = 0; m < internal_number; m++){ // Input -> internals
+            data.predators[n].network.internal_bias[m] = rand()/((float)RAND_MAX) - 0.5;
+            for (int i = 0; i < input_number; i++){
+                data.predators[n].network.input_to_internal_weight[m][i] = (rand()/((float)RAND_MAX)) - 0.5;
+            }
+        }
+        for (int m = 0; m < output_number; m++){ // internal -> outputs
+            data.predators[n].network.output_bias[m] = rand()/((float)RAND_MAX) - 0.5;
+            for (int i = 0; i < internal_number; i++){
+                data.predators[n].network.internal_to_output_weight[m][i] = (rand()/((float)RAND_MAX)) - 0.5;
+            }
+        }
+    }
+}
+
 
 int main(int argc, char **argv) {
     srand((unsigned) time(NULL));
@@ -235,14 +271,7 @@ int main(int argc, char **argv) {
     data.number_predators = initial_predators;
     data.number_of_prey = initial_prey;
 
-    for (int n = 0; n < data.number_of_prey; n++){ //Scatter predators and prey
-        data.prey[n].pos[0] = map_size_x*((float) rand())/(RAND_MAX);
-        data.prey[n].pos[1] = map_size_y*((float) rand())/(RAND_MAX);
-    }
-    for (int n = 0; n < data.number_predators; n++){
-        data.predators[n].pos[0] = 1000*((float) rand())/(RAND_MAX);
-        data.predators[n].pos[1] = 1000*((float) rand())/(RAND_MAX);
-    }
+    randomise_start();
 
 
     cudaMalloc(&cuda_data, sizeof (data));
@@ -265,7 +294,6 @@ int main(int argc, char **argv) {
             }
         }
     }
-
     physicsThread.join();
 
 
