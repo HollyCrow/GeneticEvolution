@@ -116,7 +116,7 @@ __global__ void prey_process(Data* data) { // Unsure weather to merge this and p
                 distance[0]*distance[0] + distance[1]*distance[1] // I cannot believe that it lets me do this
         };
         if (distance[2] < prey_view_distance*prey_view_distance){
-            float angle = atan2(distance[0], distance[1]);
+            float angle = atan2(distance[0], distance[1]) - data->prey[index].direction;
             int closest = (angle/view_angle)+4;
             if (data->prey[index].network.inputs[closest+4] < (25/sqrt(distance[2]))){
                 data->prey[index].network.inputs[closest+4] = (25/sqrt(distance[2]));
@@ -128,10 +128,6 @@ __global__ void prey_process(Data* data) { // Unsure weather to merge this and p
     agent_think(data->prey, index);
     agent_update_final(data->prey, index);
 }
-
-
-
-
 __global__ void predator_process(Data* data){
     int index = (blockIdx.x); //TODO work for thread and block split
 //    if (index >= data->number_of_prey){index -= data->number_of_prey;} // Allows prey and predators to work on the same function.
@@ -146,7 +142,7 @@ __global__ void predator_process(Data* data){
                 distance[0]*distance[0] + distance[1]*distance[1] // I cannot believe that it lets me do this
         };
         if (distance[2] < predators_view_distance*predators_view_distance){
-            float angle = atan2(distance[0], distance[1]);
+            float angle = atan2(distance[0], distance[1]) - data->predators[index].direction;
             int closest = (angle/view_angle)+4;
             if (data->predators[index].network.inputs[closest+4] < (25/sqrt(distance[2]))){
                 data->predators[index].network.inputs[closest+4] = (25/sqrt(distance[2]));
